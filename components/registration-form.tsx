@@ -1,96 +1,163 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
+import { useState, useRef, useCallback, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { registrationSchema } from "@/lib/validation";
+import { toast } from "sonner";
+import { z } from "zod";
 
 interface FormData {
-  name: string
-  phone: string
-  email: string
+  name: string;
+  phone: string;
+  email: string;
 }
 
-interface FormErrors {
-  name?: string
-  phone?: string
-  email?: string
+// Custom hooks for tracking behavior
+function useDebounce<T extends (...args: any[]) => void>(
+  callback: T,
+  delay: number,
+) {
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  return useCallback(
+    (...args: Parameters<T>) => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => {
+        callback(...args);
+      }, delay);
+    },
+    [callback, delay],
+  );
+}
+
+function useThrottle<T extends (...args: any[]) => void>(
+  callback: T,
+  delay: number,
+) {
+  const lastCallRef = useRef<number>(0);
+  return useCallback(
+    (...args: Parameters<T>) => {
+      const now = Date.now();
+      if (now - lastCallRef.current >= delay) {
+        lastCallRef.current = now;
+        callback(...args);
+      }
+    },
+    [callback, delay],
+  );
 }
 
 export function RegistrationForm() {
   const [formData, setFormData] = useState<FormData>({
-    name: '',
-    phone: '',
-    email: '',
-  })
+    name: "",
+    phone: "",
+    email: "",
+  });
 
-  const [errors, setErrors] = useState<FormErrors>({})
-  const [isLoading, setIsLoading] = useState(false)
-  const [submitted, setSubmitted] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string[]>>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  // Tracking Click (Debounce)
+  const handleFormClick = useDebounce(() => {
+    toast.info("Đã ghi nhận hành vi: Click vào khu vực đăng ký", {
+      duration: 2000,
+      id: "track-click", // Prevent duplicate toasts stacking up
+    });
+    console.log("User Behavior: Clicked on registration form");
+  }, 1000);
+
+  // Tracking Scroll (Throttle)
+  const handleScroll = useThrottle(() => {
+    toast.info("Đã ghi nhận hành vi: Cuộn trang", {
+      duration: 2000,
+      id: "track-scroll",
+    });
+    console.log("User Behavior: Scrolled page");
+  }, 2000);
+
+  useEffect(() => {
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [handleScroll]);
 
   const validateForm = (): boolean => {
-    const newErrors: FormErrors = {}
+    const validatedData = registrationSchema.safeParse(formData);
 
-    if (!formData.name.trim()) {
-      newErrors.name = 'Vui lòng nhập tên'
+    if (!validatedData.success) {
+      setErrors(validatedData.error.flatten().fieldErrors);
+      return false;
     }
 
-    if (!formData.phone.trim()) {
-      newErrors.phone = 'Vui lòng nhập số điện thoại'
-    } else if (!/^[0-9+\-\s()]{10,}$/.test(formData.phone)) {
-      newErrors.phone = 'Số điện thoại không hợp lệ'
-    }
-
-    if (!formData.email.trim()) {
-      newErrors.email = 'Vui lòng nhập email'
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = 'Email không hợp lệ'
-    }
-
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
+    setErrors({});
+    return true;
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target
+    const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
       [name]: value,
-    }))
+    }));
 
     // Clear error for this field when user starts typing
-    if (errors[name as keyof FormErrors]) {
+    if (errors[name]) {
       setErrors((prev) => ({
         ...prev,
-        [name]: undefined,
-      }))
+        [name]: [],
+      }));
     }
-  }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
 
     if (!validateForm()) {
-      return
+      toast.error("Vui lòng kiểm tra lại thông tin đăng ký");
+      return;
     }
 
-    setIsLoading(true)
+    setIsLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      const response = await fetch("/api/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(formData),
+      });
 
-      setSubmitted(true)
-      setFormData({ name: '', phone: '', email: '' })
+      const result = await response.json();
+
+      if (!response.ok) {
+        if (result.errors) {
+          setErrors(result.errors);
+        }
+        throw new Error(result.message || "Có lỗi xảy ra khi gửi đăng ký");
+      }
+
+      setSubmitted(true);
+      setFormData({ name: "", phone: "", email: "" });
+      toast.success("Đăng ký thành công!");
 
       // Reset success message after 5 seconds
-      setTimeout(() => setSubmitted(false), 5000)
+      setTimeout(() => setSubmitted(false), 5000);
+    } catch (error: any) {
+      toast.error(error.message);
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
-    <section id="register" className="relative py-20 md:py-32 bg-secondary/20">
+    <section
+      id="register"
+      className="relative py-20 md:py-32 bg-secondary/20"
+      onClick={handleFormClick}
+    >
       <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="bg-card rounded-2xl border border-border p-8 md:p-12 shadow-lg">
           <div className="text-center mb-8">
@@ -109,14 +176,18 @@ export function RegistrationForm() {
                 Cảm ơn bạn đã đăng ký!
               </h3>
               <p className="text-foreground/60">
-                Chúng tôi sẽ gửi thông tin chi tiết đến email của bạn trong vòng 24 giờ.
+                Chúng tôi sẽ gửi thông tin chi tiết đến email của bạn trong vòng
+                24 giờ.
               </p>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
               {/* Name Field */}
               <div>
-                <label htmlFor="name" className="block text-sm font-medium text-foreground mb-2">
+                <label
+                  htmlFor="name"
+                  className="block text-sm font-medium text-foreground mb-2"
+                >
                   Họ và Tên *
                 </label>
                 <input
@@ -127,22 +198,25 @@ export function RegistrationForm() {
                   onChange={handleChange}
                   placeholder="Nguyễn Văn A"
                   className={`w-full px-4 py-3 rounded-lg bg-background border transition-all ${
-                    errors.name
-                      ? 'border-red-500 focus:ring-2 focus:ring-red-200'
-                      : 'border-border focus:border-accent focus:ring-2 focus:ring-accent/20'
+                    errors.name && errors.name.length > 0
+                      ? "border-red-500 focus:ring-2 focus:ring-red-200"
+                      : "border-border focus:border-accent focus:ring-2 focus:ring-accent/20"
                   } text-foreground placeholder-foreground/50 focus:outline-none`}
                 />
-                {errors.name && (
+                {errors.name && errors.name.length > 0 && (
                   <div className="mt-2 flex items-center gap-2 text-red-600 text-sm">
                     <AlertCircle className="w-4 h-4" />
-                    {errors.name}
+                    {errors.name[0]}
                   </div>
                 )}
               </div>
 
               {/* Phone Field */}
               <div>
-                <label htmlFor="phone" className="block text-sm font-medium text-foreground mb-2">
+                <label
+                  htmlFor="phone"
+                  className="block text-sm font-medium text-foreground mb-2"
+                >
                   Số Điện Thoại *
                 </label>
                 <input
@@ -153,22 +227,25 @@ export function RegistrationForm() {
                   onChange={handleChange}
                   placeholder="+84 123 456 789"
                   className={`w-full px-4 py-3 rounded-lg bg-background border transition-all ${
-                    errors.phone
-                      ? 'border-red-500 focus:ring-2 focus:ring-red-200'
-                      : 'border-border focus:border-accent focus:ring-2 focus:ring-accent/20'
+                    errors.phone && errors.phone.length > 0
+                      ? "border-red-500 focus:ring-2 focus:ring-red-200"
+                      : "border-border focus:border-accent focus:ring-2 focus:ring-accent/20"
                   } text-foreground placeholder-foreground/50 focus:outline-none`}
                 />
-                {errors.phone && (
+                {errors.phone && errors.phone.length > 0 && (
                   <div className="mt-2 flex items-center gap-2 text-red-600 text-sm">
                     <AlertCircle className="w-4 h-4" />
-                    {errors.phone}
+                    {errors.phone[0]}
                   </div>
                 )}
               </div>
 
               {/* Email Field */}
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-foreground mb-2">
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium text-foreground mb-2"
+                >
                   Email *
                 </label>
                 <input
@@ -179,15 +256,15 @@ export function RegistrationForm() {
                   onChange={handleChange}
                   placeholder="your.email@example.com"
                   className={`w-full px-4 py-3 rounded-lg bg-background border transition-all ${
-                    errors.email
-                      ? 'border-red-500 focus:ring-2 focus:ring-red-200'
-                      : 'border-border focus:border-accent focus:ring-2 focus:ring-accent/20'
+                    errors.email && errors.email.length > 0
+                      ? "border-red-500 focus:ring-2 focus:ring-red-200"
+                      : "border-border focus:border-accent focus:ring-2 focus:ring-accent/20"
                   } text-foreground placeholder-foreground/50 focus:outline-none`}
                 />
-                {errors.email && (
+                {errors.email && errors.email.length > 0 && (
                   <div className="mt-2 flex items-center gap-2 text-red-600 text-sm">
                     <AlertCircle className="w-4 h-4" />
-                    {errors.email}
+                    {errors.email[0]}
                   </div>
                 )}
               </div>
@@ -203,7 +280,7 @@ export function RegistrationForm() {
                     Đang Xử Lý...
                   </>
                 ) : (
-                  'Đăng Ký Ngay'
+                  "Đăng Ký Ngay"
                 )}
               </Button>
 
@@ -215,5 +292,5 @@ export function RegistrationForm() {
         </div>
       </div>
     </section>
-  )
+  );
 }

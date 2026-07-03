@@ -58,18 +58,63 @@ export function RegistrationForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  // Batching tracking events
+  const eventQueue = useRef<any[]>([]);
+
+  const flushEvents = useCallback(async () => {
+    if (eventQueue.current.length === 0) return;
+
+    const eventsToSend = [...eventQueue.current];
+    eventQueue.current = [];
+
+    try {
+      await fetch("/api/track-event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ events: eventsToSend }),
+      });
+    } catch (err) {
+      console.error("Failed to send tracking events:", err);
+      // If failed, we could push back to queue, but keeping it simple for now
+    }
+  }, []);
+
+  useEffect(() => {
+    // Flush every 10 seconds
+    const interval = setInterval(flushEvents, 10000);
+
+    // Flush on page unload
+    window.addEventListener("beforeunload", flushEvents);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("beforeunload", flushEvents);
+      flushEvents(); // flush on unmount
+    };
+  }, [flushEvents]);
+
   // Tracking Click (Debounce)
   const handleFormClick = useDebounce(() => {
-    toast.info("Đã ghi nhận hành vi: Click vào khu vực đăng ký", {
+    eventQueue.current.push({
+      event_type: "click",
+      event_target: "registration_form",
+      session_id: "anonymous", // You can replace with real session ID if available
+    });
+    toast.info("Đã ghi nhận hành vi: Click vào khu vực đăng ký (Gom cụm)", {
       duration: 2000,
-      id: "track-click", // Prevent duplicate toasts stacking up
+      id: "track-click",
     });
     console.log("User Behavior: Clicked on registration form");
   }, 1000);
 
   // Tracking Scroll (Throttle)
   const handleScroll = useThrottle(() => {
-    toast.info("Đã ghi nhận hành vi: Cuộn trang", {
+    eventQueue.current.push({
+      event_type: "scroll",
+      event_target: "page",
+      session_id: "anonymous",
+    });
+    toast.info("Đã ghi nhận hành vi: Cuộn trang (Gom cụm)", {
       duration: 2000,
       id: "track-scroll",
     });
